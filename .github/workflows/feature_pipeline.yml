@@ -31,7 +31,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # 2. Login to Azure
+      # 2. Login to Azure using Service Principal
       - name: Azure Login
         uses: azure/login@v2
         with:
@@ -54,11 +54,16 @@ jobs:
       # 5. Terraform Format
       - name: Terraform Format Check
         run: terraform fmt -recursive
-        
 
-      # 6. Terraform Init
+      # 6. Terraform Init with Azure Remote Backend
       - name: Terraform Init
-        run: terraform init
+        run: |
+          terraform init \
+            -backend-config="resource_group_name=msc_airtelrg" \
+            -backend-config="storage_account_name=switchpahariya1" \
+            -backend-config="container_name=pahariya" \
+            -backend-config="key=sandbox.tfstate" \
+            
 
       # 7. Terraform Validate
       - name: Terraform Validate
@@ -67,3 +72,4 @@ jobs:
       # 8. Terraform Plan
       - name: Terraform Plan
         run: terraform plan
+
