@@ -11,7 +11,7 @@ The repository follows a **modular Infrastructure-as-Code approach**, where comm
 
 ---
 
-## 🚀 What is CloudCrafted?
+### 🚀 What is CloudCrafted?
 
 CloudCrafted demonstrates how Azure infrastructure can be designed using **Terraform modules** instead of managing individual resources repeatedly across environments.
 
