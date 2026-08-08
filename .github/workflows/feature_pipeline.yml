@@ -72,4 +72,4 @@ jobs:
       # 8. Terraform Plan
       - name: Terraform Plan
         run: terraform plan
-```
+
