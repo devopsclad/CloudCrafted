@@ -4,29 +4,29 @@ module "rg_module" {
   
 }
 
-module "module_vnet" {
-  source = "../../modules/azurerm_virtual_network"
-  depends_on = [ module.rg_module ]
-  virtual_network=var.virtual_network
+# module "module_vnet" {
+#   source = "../../modules/azurerm_virtual_network"
+#   depends_on = [ module.rg_module ]
+#   virtual_network=var.virtual_network
   
-}
+# }
 
-module "module_subnet" {
-  source ="../../modules/azurerm_subnet"
-  depends_on = [module.module_vnet,module.rg_module ]
-  subnet=var.subnet
+# module "module_subnet" {
+#   source ="../../modules/azurerm_subnet"
+#   depends_on = [module.module_vnet,module.rg_module ]
+#   subnet=var.subnet
 
   
-}
+# }
 
-module "module_pip" {
-  source = "../../modules/azurerm_public_ip"
-  depends_on = [ module.rg_module ]
-  public_ip=var.public_ip
+# module "module_pip" {
+#   source = "../../modules/azurerm_public_ip"
+#   depends_on = [ module.rg_module ]
+#   public_ip=var.public_ip
  
   
   
-}
+# }
 
 # module "module_bastion" {
 #   source = "../../modules/azurerm_bastion"
@@ -42,18 +42,18 @@ module "module_pip" {
   
 # }
 
-module "module_nic" {
-  source = "../../modules/azurerm_nic"
-  depends_on = [ module.rg_module,module.module_pip,module.module_subnet]
-  nic=var.nic
+# module "module_nic" {
+#   source = "../../modules/azurerm_nic"
+#   depends_on = [ module.rg_module,module.module_pip,module.module_subnet]
+#   nic=var.nic
   
-}
+# }
 
-module "module_VM" {
-  source = "../../modules/azurerm_virtual_machine"
-  depends_on = [ module.module_nic,module.rg_module ]
-  VM=var.VM
+# module "module_VM" {
+#   source = "../../modules/azurerm_virtual_machine"
+#   depends_on = [ module.module_nic,module.rg_module ]
+#   VM=var.VM
   
-}
+# }
 
  
