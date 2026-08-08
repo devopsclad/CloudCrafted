@@ -1,0 +1,157 @@
+name: Terraform Main Branch Apply
+
+on:
+  push:
+    branches:
+      - main
+
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+
+  # ==========================================================
+  # TERRAFORM PLAN
+  # ==========================================================
+  terraform-plan:
+
+    runs-on: ubuntu-latest
+
+    env:
+      ARM_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+      ARM_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+      ARM_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+      ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+    defaults:
+      run:
+        working-directory: ./environments/DEV
+
+    steps:
+
+      # 1. Checkout repository
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # 2. Login to Azure using Service Principal
+      - name: Azure Login
+        uses: azure/login@v2
+        with:
+          creds: |
+            {
+              "clientId": "${{ secrets.AZURE_CLIENT_ID }}",
+              "clientSecret": "${{ secrets.AZURE_CLIENT_SECRET }}",
+              "subscriptionId": "${{ secrets.AZURE_SUBSCRIPTION_ID }}",
+              "tenantId": "${{ secrets.AZURE_TENANT_ID }}"
+            }
+
+      # 3. Install Terraform
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+
+      # 4. Terraform Version
+      - name: Terraform Version
+        run: terraform version
+
+      # 5. Terraform Format
+      - name: Terraform Format Check
+        run: terraform fmt -recursive
+
+      # 6. Terraform Init
+      - name: Terraform Init
+        run: |
+          terraform init \
+            -backend-config="resource_group_name=msc_airtelrg" \
+            -backend-config="storage_account_name=switchpahariya1" \
+            -backend-config="container_name=pahariya" \
+            -backend-config="key=dev.tfstate" \
+            -backend-config="use_azuread_auth=true"
+
+      # 7. Terraform Validate
+      - name: Terraform Validate
+        run: terraform validate
+
+      # 8. Terraform Plan
+      - name: Terraform Plan
+        run: terraform plan -out=tfplan
+
+      # 9. Upload Terraform Plan Artifact
+      - name: Upload Terraform Plan
+        uses: actions/upload-artifact@v4
+        with:
+          name: terraform-plan
+          path: ./environments/DEV/tfplan
+          retention-days: 7
+
+
+  # ==========================================================
+  # TERRAFORM APPLY
+  # ==========================================================
+  terraform-apply:
+
+    needs: terraform-plan
+
+    runs-on: ubuntu-latest
+
+    # ========================================================
+    # APPROVAL GATE
+    # GitHub Environment "Dev" must have Required Reviewers
+    # configured in Repository Settings
+    # ========================================================
+    environment:
+      name: Dev
+
+    env:
+      ARM_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+      ARM_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+      ARM_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+      ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+    defaults:
+      run:
+        working-directory: ./environments/DEV
+
+    steps:
+
+      # 1. Checkout repository
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # 2. Login to Azure using Service Principal
+      - name: Azure Login
+        uses: azure/login@v2
+        with:
+          creds: |
+            {
+              "clientId": "${{ secrets.AZURE_CLIENT_ID }}",
+              "clientSecret": "${{ secrets.AZURE_CLIENT_SECRET }}",
+              "subscriptionId": "${{ secrets.AZURE_SUBSCRIPTION_ID }}",
+              "tenantId": "${{ secrets.AZURE_TENANT_ID }}"
+            }
+
+      # 3. Install Terraform
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+
+      # 4. Terraform Init
+      - name: Terraform Init
+        run: |
+          terraform init \
+            -backend-config="resource_group_name=msc_airtelrg" \
+            -backend-config="storage_account_name=switchpahariya1" \
+            -backend-config="container_name=pahariya" \
+            -backend-config="key=dev.tfstate" \
+            -backend-config="use_azuread_auth=true"
+
+      # 5. Download the exact Terraform Plan
+      - name: Download Terraform Plan
+        uses: actions/download-artifact@v4
+        with:
+          name: terraform-plan
+          path: ./environments/DEV
+
+      # 6. Terraform Apply
+      - name: Terraform Apply
+        run: terraform apply -auto-approve tfplan
