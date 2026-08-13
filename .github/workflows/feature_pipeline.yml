@@ -21,17 +21,31 @@ jobs:
       ARM_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
       ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
+      # Azure OpenAI / Microsoft Foundry
+      AZURE_OPENAI_ENDPOINT: ${{ vars.AZURE_OPENAI_ENDPOINT }}
+      AZURE_OPENAI_DEPLOYMENT: ${{ vars.AZURE_OPENAI_DEPLOYMENT }}
+
+      # Maximum number of AI repair attempts
+      AI_MAX_ATTEMPTS: "3"
+
     defaults:
       run:
         working-directory: ./environments/DEV
 
     steps:
 
-      # 1. Checkout repository
+      # ============================================================
+      # 1. Checkout
+      # ============================================================
+
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # 2. Login to Azure using Service Principal
+
+      # ============================================================
+      # 2. Azure Login
+      # ============================================================
+
       - name: Azure Login
         uses: azure/login@v2
         with:
@@ -43,33 +57,625 @@ jobs:
               "tenantId": "${{ secrets.AZURE_TENANT_ID }}"
             }
 
-      # 3. Install Terraform
+
+      # ============================================================
+      # 3. Setup Terraform
+      # ============================================================
+
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
 
-      # 4. Check Terraform version
+
+      # ============================================================
+      # 4. Setup Python
+      # ============================================================
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+
+      # ============================================================
+      # 5. Install AI Agent dependencies
+      # ============================================================
+
+      - name: Install AI Agent dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install openai
+
+
+      # ============================================================
+      # 6. Terraform Version
+      # ============================================================
+
       - name: Terraform Version
         run: terraform version
 
-      # 5. Terraform Format
+
+      # ============================================================
+      # 7. Terraform Format
+      # ============================================================
+
       - name: Terraform Format Check
         run: terraform fmt -recursive
 
-      # 6. Terraform Init with Azure Remote Backend
+
+      # ============================================================
+      # 8. Terraform Init
+      # ============================================================
+
       - name: Terraform Init
         run: |
           terraform init \
             -backend-config="resource_group_name=msc_airtelrg" \
             -backend-config="storage_account_name=switchpahariya1" \
             -backend-config="container_name=pahariya" \
-            -backend-config="key=sandbox.tfstate" \
-            
+            -backend-config="key=dev.tfstate"
 
-      # 7. Terraform Validate
+
+      # ============================================================
+      # 9. Terraform Validate - FIRST ATTEMPT
+      # ============================================================
+
       - name: Terraform Validate
-        run: terraform validate
+        id: terraform_validate
+        continue-on-error: true
+        run: |
+          terraform validate 2>&1 | tee terraform-validate.log
 
-      # 8. Terraform Plan
+
+      # ============================================================
+      # 10. AI AGENT - VALIDATE FAILURE
+      #
+      # If validate fails:
+      # Analyze
+      # Root Cause
+      # Suggestion
+      # Generate patch
+      # Apply patch
+      # fmt
+      # validate again
+      # ============================================================
+
+      - name: AI Agent - Fix Terraform Validate
+        if: steps.terraform_validate.outcome == 'failure'
+        env:
+          AZURE_OPENAI_ENDPOINT: ${{ vars.AZURE_OPENAI_ENDPOINT }}
+          AZURE_OPENAI_DEPLOYMENT: ${{ vars.AZURE_OPENAI_DEPLOYMENT }}
+        run: |
+          python - <<'PY'
+          import os
+          import json
+          import subprocess
+          import sys
+          from openai import OpenAI
+          from azure.identity import DefaultAzureCredential, get_bearer_token_provider
+
+          print("====================================================")
+          print("AI TERRAFORM AGENT - VALIDATE FAILURE")
+          print("====================================================")
+
+          endpoint = os.environ["AZURE_OPENAI_ENDPOINT"]
+          deployment = os.environ["AZURE_OPENAI_DEPLOYMENT"]
+
+          if not endpoint or not deployment:
+              print("ERROR: Azure OpenAI endpoint/deployment is not configured.")
+              sys.exit(1)
+
+          # --------------------------------------------------------
+          # Azure Entra authentication
+          # --------------------------------------------------------
+
+          token_provider = get_bearer_token_provider(
+              DefaultAzureCredential(),
+              "https://cognitiveservices.azure.com/.default"
+          )
+
+          client = OpenAI(
+              base_url=endpoint.rstrip("/") + "/openai/v1/",
+              api_key=token_provider
+          )
+
+          # --------------------------------------------------------
+          # Read Terraform validation error
+          # --------------------------------------------------------
+
+          with open("terraform-validate.log", "r", errors="ignore") as f:
+              error = f.read()
+
+          # --------------------------------------------------------
+          # Collect Terraform source files
+          # Don't send tfvars/secrets
+          # --------------------------------------------------------
+
+          files = {}
+
+          for root, dirs, filenames in os.walk("."):
+              dirs[:] = [
+                  d for d in dirs
+                  if d not in [".terraform", ".git"]
+              ]
+
+              for filename in filenames:
+
+                  if not filename.endswith(".tf"):
+                      continue
+
+                  path = os.path.join(root, filename)
+
+                  try:
+                      with open(path, "r", errors="ignore") as f:
+                          files[path] = f.read()
+                  except Exception:
+                      pass
+
+          terraform_code = ""
+
+          for path, content in files.items():
+              terraform_code += f"\n\n===== FILE: {path} =====\n"
+              terraform_code += content
+
+          # --------------------------------------------------------
+          # AI prompt
+          # --------------------------------------------------------
+
+          system_prompt = """
+          You are an expert Terraform and Azure DevOps remediation agent.
+
+          A Terraform validation command has failed.
+
+          Your job is to:
+
+          1. Analyze the Terraform error.
+          2. Identify the root cause.
+          3. Explain the root cause clearly.
+          4. Give a concise suggested fix.
+          5. Generate a SAFE Terraform code patch.
+          6. Only modify existing .tf files.
+          7. Never modify .github files.
+          8. Never modify pipeline YAML.
+          9. Never modify tfvars files.
+          10. Never add secrets, passwords, tokens or credentials.
+          11. Do not change Terraform backend configuration.
+          12. Do not change Azure authentication.
+          13. Do not create destructive resources.
+          14. Do not use terraform destroy.
+          15. Do not invent files that do not exist.
+
+          Return ONLY valid JSON in this exact structure:
+
+          {
+            "root_cause": "explanation",
+            "suggestion": "what should be changed",
+            "patch": "unified git diff patch"
+          }
+
+          If the error cannot safely be fixed automatically,
+          return an empty patch:
+
+          {
+            "root_cause": "...",
+            "suggestion": "...",
+            "patch": ""
+          }
+          """
+
+          user_prompt = f"""
+          Terraform validation failed.
+
+          ERROR:
+          {error}
+
+          TERRAFORM SOURCE:
+          {terraform_code}
+
+          Analyze the failure and provide the JSON response.
+          """
+
+          # --------------------------------------------------------
+          # Call Azure OpenAI
+          # --------------------------------------------------------
+
+          response = client.chat.completions.create(
+              model=deployment,
+              messages=[
+                  {
+                      "role": "system",
+                      "content": system_prompt
+                  },
+                  {
+                      "role": "user",
+                      "content": user_prompt
+                  }
+              ],
+              max_completion_tokens=5000
+          )
+
+          content = response.choices[0].message.content
+
+          print("\n================ AI RESPONSE ================\n")
+          print(content)
+
+          # --------------------------------------------------------
+          # Parse AI response
+          # --------------------------------------------------------
+
+          try:
+              result = json.loads(content)
+          except Exception:
+              print("AI returned invalid JSON.")
+              sys.exit(1)
+
+          print("\n================ ROOT CAUSE ================\n")
+          print(result.get("root_cause", ""))
+
+          print("\n================ SUGGESTION ================\n")
+          print(result.get("suggestion", ""))
+
+          patch = result.get("patch", "")
+
+          if not patch.strip():
+              print("\nAI did not provide a safe automatic patch.")
+              sys.exit(1)
+
+          # --------------------------------------------------------
+          # Validate patch before applying
+          # --------------------------------------------------------
+
+          with open("ai-fix.patch", "w") as f:
+              f.write(patch)
+
+          print("\nChecking AI generated patch...")
+
+          check = subprocess.run(
+              ["git", "apply", "--check", "ai-fix.patch"],
+              capture_output=True,
+              text=True
+          )
+
+          if check.returncode != 0:
+              print("AI patch is invalid.")
+              print(check.stderr)
+              sys.exit(1)
+
+          # --------------------------------------------------------
+          # Apply patch
+          # --------------------------------------------------------
+
+          print("\nApplying AI patch...")
+
+          apply = subprocess.run(
+              ["git", "apply", "ai-fix.patch"],
+              capture_output=True,
+              text=True
+          )
+
+          if apply.returncode != 0:
+              print(apply.stderr)
+              sys.exit(1)
+
+          print("\nAI patch applied successfully.")
+
+          # --------------------------------------------------------
+          # Format
+          # --------------------------------------------------------
+
+          subprocess.run(
+              ["terraform", "fmt", "-recursive"],
+              check=False
+          )
+
+          # --------------------------------------------------------
+          # Revalidate
+          # --------------------------------------------------------
+
+          print("\nRunning Terraform Validate after AI fix...")
+
+          validate = subprocess.run(
+              ["terraform", "validate"],
+              capture_output=True,
+              text=True
+          )
+
+          print(validate.stdout)
+          print(validate.stderr)
+
+          if validate.returncode != 0:
+
+              print("\nAI first repair attempt did not fix validation.")
+
+              with open("terraform-validate-after-ai.log", "w") as f:
+                  f.write(validate.stdout)
+                  f.write(validate.stderr)
+
+              sys.exit(1)
+
+          print("\n====================================================")
+          print("AI FIX SUCCESSFUL - TERRAFORM VALIDATE PASSED")
+          print("====================================================")
+          PY
+
+
+      # ============================================================
+      # 11. Stop if Validate + AI repair still failed
+      # ============================================================
+
+      - name: Final Validate Check
+        run: |
+          terraform validate
+
+
+      # ============================================================
+      # 12. Terraform Plan
+      # ============================================================
+
       - name: Terraform Plan
-        run: terraform plan
+        id: terraform_plan
+        continue-on-error: true
+        run: |
+          terraform plan 2>&1 | tee terraform-plan.log
 
+
+      # ============================================================
+      # 13. AI AGENT - PLAN FAILURE
+      #
+      # If PLAN fails:
+      # Analyze
+      # Root Cause
+      # Suggestion
+      # Fix
+      # Validate
+      # Plan again
+      # ============================================================
+
+      - name: AI Agent - Fix Terraform Plan
+        if: steps.terraform_plan.outcome == 'failure'
+        env:
+          AZURE_OPENAI_ENDPOINT: ${{ vars.AZURE_OPENAI_ENDPOINT }}
+          AZURE_OPENAI_DEPLOYMENT: ${{ vars.AZURE_OPENAI_DEPLOYMENT }}
+        run: |
+          python - <<'PY'
+          import os
+          import json
+          import subprocess
+          import sys
+
+          from openai import OpenAI
+          from azure.identity import DefaultAzureCredential, get_bearer_token_provider
+
+          print("====================================================")
+          print("AI TERRAFORM AGENT - PLAN FAILURE")
+          print("====================================================")
+
+          endpoint = os.environ["AZURE_OPENAI_ENDPOINT"]
+          deployment = os.environ["AZURE_OPENAI_DEPLOYMENT"]
+
+          token_provider = get_bearer_token_provider(
+              DefaultAzureCredential(),
+              "https://cognitiveservices.azure.com/.default"
+          )
+
+          client = OpenAI(
+              base_url=endpoint.rstrip("/") + "/openai/v1/",
+              api_key=token_provider
+          )
+
+          # --------------------------------------------------------
+          # Read Plan Error
+          # --------------------------------------------------------
+
+          with open("terraform-plan.log", "r", errors="ignore") as f:
+              plan_error = f.read()
+
+          # --------------------------------------------------------
+          # Read Terraform files
+          # --------------------------------------------------------
+
+          terraform_code = ""
+
+          for root, dirs, filenames in os.walk("."):
+
+              dirs[:] = [
+                  d for d in dirs
+                  if d not in [".terraform", ".git"]
+              ]
+
+              for filename in filenames:
+
+                  if not filename.endswith(".tf"):
+                      continue
+
+                  path = os.path.join(root, filename)
+
+                  try:
+                      with open(path, "r", errors="ignore") as f:
+                          terraform_code += (
+                              f"\n\n===== FILE: {path} =====\n"
+                              + f.read()
+                          )
+                  except Exception:
+                      pass
+
+          # --------------------------------------------------------
+          # AI instructions
+          # --------------------------------------------------------
+
+          system_prompt = """
+          You are an expert Terraform and Azure infrastructure remediation agent.
+
+          Terraform PLAN has failed.
+
+          Analyze the plan failure and:
+
+          1. Identify root cause.
+          2. Explain why terraform plan failed.
+          3. Provide a suggested correction.
+          4. Generate a SAFE unified git diff patch.
+
+          Rules:
+
+          - Only modify existing .tf files.
+          - Never modify GitHub Actions YAML.
+          - Never modify backend configuration.
+          - Never modify Azure authentication.
+          - Never modify secrets.
+          - Never modify tfvars.
+          - Never add credentials.
+          - Never run terraform destroy.
+          - Never remove resources just to make the plan pass.
+          - Prefer the smallest possible change.
+          - If the problem is caused by an external Azure state,
+            permissions, quota, networking, missing resource or
+            provider limitation, do NOT invent a Terraform code fix.
+          - In that case return an empty patch.
+
+          Return ONLY valid JSON:
+
+          {
+            "root_cause": "...",
+            "suggestion": "...",
+            "patch": "unified git diff"
+          }
+          """
+
+          user_prompt = f"""
+          Terraform PLAN failed.
+
+          PLAN OUTPUT:
+          {plan_error}
+
+          TERRAFORM CODE:
+          {terraform_code}
+
+          Analyze and provide the JSON response.
+          """
+
+          response = client.chat.completions.create(
+              model=deployment,
+              messages=[
+                  {
+                      "role": "system",
+                      "content": system_prompt
+                  },
+                  {
+                      "role": "user",
+                      "content": user_prompt
+                  }
+              ],
+              max_completion_tokens=5000
+          )
+
+          content = response.choices[0].message.content
+
+          print("\n================ AI RESPONSE ================\n")
+          print(content)
+
+          try:
+              result = json.loads(content)
+          except Exception:
+              print("Invalid AI JSON response.")
+              sys.exit(1)
+
+          print("\n================ ROOT CAUSE ================\n")
+          print(result.get("root_cause", ""))
+
+          print("\n================ SUGGESTION ================\n")
+          print(result.get("suggestion", ""))
+
+          patch = result.get("patch", "")
+
+          if not patch.strip():
+              print("\nAI determined that this is not safely auto-fixable.")
+              sys.exit(1)
+
+          # --------------------------------------------------------
+          # Check patch
+          # --------------------------------------------------------
+
+          with open("ai-plan-fix.patch", "w") as f:
+              f.write(patch)
+
+          check = subprocess.run(
+              ["git", "apply", "--check", "ai-plan-fix.patch"],
+              capture_output=True,
+              text=True
+          )
+
+          if check.returncode != 0:
+              print("AI generated invalid patch.")
+              print(check.stderr)
+              sys.exit(1)
+
+          # --------------------------------------------------------
+          # Apply patch
+          # --------------------------------------------------------
+
+          subprocess.run(
+              ["git", "apply", "ai-plan-fix.patch"],
+              check=True
+          )
+
+          print("\nAI plan fix applied.")
+
+          # --------------------------------------------------------
+          # Terraform format
+          # --------------------------------------------------------
+
+          subprocess.run(
+              ["terraform", "fmt", "-recursive"],
+              check=False
+          )
+
+          # --------------------------------------------------------
+          # Validate after AI correction
+          # --------------------------------------------------------
+
+          print("\nRunning Terraform Validate after AI plan fix...")
+
+          validate = subprocess.run(
+              ["terraform", "validate"],
+              capture_output=True,
+              text=True
+          )
+
+          print(validate.stdout)
+          print(validate.stderr)
+
+          if validate.returncode != 0:
+              print("\nTerraform validation failed after AI plan correction.")
+              sys.exit(1)
+
+          # --------------------------------------------------------
+          # Plan again
+          # --------------------------------------------------------
+
+          print("\nRunning Terraform Plan again...")
+
+          plan = subprocess.run(
+              ["terraform", "plan"],
+              capture_output=True,
+              text=True
+          )
+
+          print(plan.stdout)
+          print(plan.stderr)
+
+          if plan.returncode != 0:
+              print("\nAI could not repair Terraform plan.")
+              sys.exit(1)
+
+          print("\n====================================================")
+          print("AI PLAN FIX SUCCESSFUL - TERRAFORM PLAN PASSED")
+          print("====================================================")
+          PY
+
+
+      # ============================================================
+      # 14. Final Plan Check
+      # ============================================================
+
+      - name: Final Terraform Plan Check
+        run: |
+          terraform plan
