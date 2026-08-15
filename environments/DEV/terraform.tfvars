@@ -3,8 +3,8 @@ rg_name = {
         name="all_purpose_rg1"
         location="westus2"
         managed_by="Terraform"
-    }
-
+    
+   }
     akamai_proj2={
         name="all_purpose_rg2"
         location="westus2"

@@ -62,7 +62,7 @@ jobs:
             -backend-config="resource_group_name=msc_airtelrg" \
             -backend-config="storage_account_name=switchpahariya1" \
             -backend-config="container_name=pahariya" \
-            -backend-config="key=sandbox.tfstate" \
+            -backend-config="key=dev.tfstate" \
             
 
       # 7. Terraform Validate
@@ -72,4 +72,3 @@ jobs:
       # 8. Terraform Plan
       - name: Terraform Plan
         run: terraform plan
-
