@@ -10,6 +10,12 @@ rg_name = {
         location="westus2"
         managed_by="Terraform"
     }
+
+ akamai_proj4={
+        name="all_purpose_rg4"
+        location="westus2"
+        managed_by="Terraform"
+    }
 }
 
 # virtual_network = {
