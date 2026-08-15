@@ -11,9 +11,14 @@ rg_name = {
         managed_by="Terraform"
     }
 
-   
     akamai_proj3={
         name="all_purpose_rg3"
+        location="westus2"
+        managed_by="Terraform"
+    }
+  
+     akamai_proj4={
+        name="all_purpose_rg4"
         location="westus2"
         managed_by="Terraform"
     }
