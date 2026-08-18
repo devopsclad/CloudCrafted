@@ -31,7 +31,27 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # 2. Login to Azure using Service Principal
+      # 2. Install Gitleaks
+      # Gitleaks is installed on the temporary GitHub-hosted Ubuntu runner
+      - name: Install Gitleaks
+        working-directory: .
+        run: |
+          curl -sSfL https://raw.githubusercontent.com/gitleaks/gitleaks/master/install.sh \
+            | sh -s -- -b /usr/local/bin
+
+          gitleaks version
+
+      # 3. Scan complete repository for secrets
+      - name: Gitleaks Secret Scan
+        working-directory: .
+        run: |
+          gitleaks detect \
+            --source . \
+            --config .github/gitleaks.toml \
+            --redact \
+            --verbose
+
+      # 4. Login to Azure using Service Principal
       - name: Azure Login
         uses: azure/login@v2
         with:
@@ -43,32 +63,31 @@ jobs:
               "tenantId": "${{ secrets.AZURE_TENANT_ID }}"
             }
 
-      # 3. Install Terraform
+      # 5. Install Terraform
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
 
-      # 4. Check Terraform version
+      # 6. Check Terraform version
       - name: Terraform Version
         run: terraform version
 
-      # 5. Terraform Format
+      # 7. Terraform Format Check
       - name: Terraform Format Check
         run: terraform fmt -recursive
 
-      # 6. Terraform Init with Azure Remote Backend
+      # 8. Terraform Init with Azure Remote Backend
       - name: Terraform Init
         run: |
           terraform init \
             -backend-config="resource_group_name=all_purpose_rg" \
             -backend-config="storage_account_name=stgsandboxinfra" \
             -backend-config="container_name=containersandboxinfra" \
-            -backend-config="key=dev.tfstate" \
-            
+            -backend-config="key=dev.tfstate"
 
-      # 7. Terraform Validate
+      # 9. Terraform Validate
       - name: Terraform Validate
         run: terraform validate
 
-      # 8. Terraform Plan
+      # 10. Terraform Plan
       - name: Terraform Plan
         run: terraform plan
