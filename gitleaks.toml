@@ -1,0 +1,10 @@
+[[rules]]
+id = "custom-password"
+description = "Detect hardcoded passwords"
+regex = '''(?i)(password|passwd|pwd)\s*[:=]\s*["']([^"'\s]{8,})["']'''
+secretGroup = 2
+keywords = [
+    "password",
+    "passwd",
+    "pwd"
+]
