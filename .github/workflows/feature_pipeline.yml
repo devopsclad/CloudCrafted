@@ -59,9 +59,9 @@ jobs:
       - name: Terraform Init
         run: |
           terraform init \
-            -backend-config="resource_group_name=msc_airtelrg" \
-            -backend-config="storage_account_name=switchpahariya1" \
-            -backend-config="container_name=pahariya" \
+            -backend-config="resource_group_name=all_purpose_rg" \
+            -backend-config="storage_account_name=stgsandboxinfra" \
+            -backend-config="container_name=containersandboxinfra" \
             -backend-config="key=dev.tfstate" \
             
 
